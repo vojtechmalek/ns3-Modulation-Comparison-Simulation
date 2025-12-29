@@ -1,5 +1,36 @@
 # Modulation Comparison Simulation
 
+## Project Purpose
+
+This project conducts a comparative performance study of three modulation schemes: **LoRa**, **WiFi HaLow**, and **DECT NR+**. The primary goal is to evaluate and compare their performance under different conditions, with particular focus on **range and noise tolerance** in line-of-sight scenarios, and **wall penetration and goodput** in non-line-of-sight scenarios.
+
+### Why These Three Modulations?
+
+All three modulation schemes operate in **license-exempt frequency bands**. They represent different trade-offs in frequency, data rate, and penetration capabilities:
+
+- **LoRa (868 MHz)**:
+  - Operates in 868 MHz ISM bands (but can be lowered)
+  - **Low frequency** provides better **wall penetration** and long-range communication
+  - **High SNR tolerance** (sensitivity down to -120 to -140 dBm) provides resilience in high-noise environments
+  - **Disadvantages:** has a lower data rate (5.5 kbps at SF7), patented (commercial use requires licensing)
+
+- **WiFi HaLow (868 MHz)**:
+  - Operates in 868 MHz license-exempt bands
+  - **Low frequency** provides good **wall penetration** (better than traditional 2.4/5 GHz WiFi)
+  - **Higher data rate** than LoRa (150 kbps to 86.7 Mbps depending on configuration)
+  - Based on IEEE 802.11ah standard (open standard)
+
+- **DECT NR+ (1.9 GHz)**:
+  - Operates at **higher frequency** (~1.9 GHz)
+  - **Much higher data rate** (up to 2 Mbps) compared to LoRa and WiFi HaLow
+  - **Disadvantages:** reduced wall penetration due to higher frequency, shorter range
+
+### Research Focus
+
+This simulation evaluates these modulations across two scenarios:
+- **S1 (line-of-sight)**: Free-space propagation with variable distance
+- **S2 (non-line-of-sight)**: Indoor propagation with walls to test **wall penetration**
+
 ## Overview
 
 NS-3-based simulation system for comparing different modulation schemes (LoRa, DECT NR+, WiFi HaLow) across multiple scenarios with uniform metrics collection.
