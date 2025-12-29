@@ -1,0 +1,106 @@
+# ============================================================================
+# SCENARIO PARAMETERS
+# ============================================================================
+# (only one scenario can be active)
+
+# S1: Simple line-of-sight scenario
+
+scenario=S1
+distance=20.0 # distance between nodes
+
+
+# S2: Indoor scenario with walls
+
+#scenario=S2
+walls=1
+wall-spacing=5.0 # distance between walls (room width). Nodes are placed 2m from walls.
+
+# Internal wall type
+# Options: residential, office, commercial
+building-type=residential
+
+# External wall type
+# Options: concrete-with-windows, concrete-without-windows, stone-blocks
+external-wall-type=concrete-with-windows
+
+# ============================================================================
+# MODULATION PARAMETERS
+# ============================================================================
+
+# Modulation to use
+# Options: lora, dect-nr+, wifi-halow
+modulation=lora
+
+# ============================================================================
+# TRAFFIC PARAMETERS
+# ============================================================================
+
+# INFO: Modulation data rates:
+# - LoRa: 5.5 kbps (SF7)
+# - DECT NR+: 2 Mbps
+# - WiFi HaLow: 150 kbps
+
+# IMPORTANT: Specify only 2 of 3 parameters (packet-rate, packet-size, duty-cycle)
+# The 3rd parameter will be calculated.
+packet-rate=6
+packet-size=100
+#duty-cycle=10.0
+
+# Payload percentage (percentage of packet that is actual payload)
+payload-percentage=100.0
+
+# ============================================================================
+# SIMULATION PARAMETERS
+# ============================================================================
+
+# Simulation time in seconds
+sim-time=100.0
+
+# Number of simulation runs
+runs=30
+
+# ============================================================================
+# NOISE PARAMETERS
+# ============================================================================
+
+# Temperature in Kelvin
+temperature=290.0
+
+# Noise figure in dBS
+noise-figure-db=10.0
+
+# Background interference power spectral density in W/Hz
+background-interference-psd=4e-19
+
+# ============================================================================
+# OUTPUT PARAMETERS
+# ============================================================================
+
+# Output directory for CSV files and simulation summary
+# Default: outputs
+output-dir=outputs
+
+# ============================================================================
+# EXAMPLE CONFIGURATIONS
+# ============================================================================
+
+# Example 1: S1 Lora
+# scenario=S1
+# modulation=lora
+# distance=100.0
+# packet-size=50
+# duty-cycle=1.0
+# sim-time=60.0
+# runs=30
+
+# Example 2: S2 with Custom Building Type
+# scenario=S2
+# modulation=lora
+# walls=2
+# wall-spacing=10.0
+# building-type=office
+# external-wall-type=concrete-without-windows
+# packet-rate=10
+# packet-size=100
+# runs=30
+
