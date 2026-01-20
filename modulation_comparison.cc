@@ -56,18 +56,21 @@ void PrintScenarioS2Info(uint32_t numWalls, double wallSpacing, uint32_t numRoom
 double CalculateS2Distance(uint32_t numWalls, double wallSpacing);
 
 // Modulation setup functions
-void SetupModulationLoRa(NodeContainer& nodes, Ptr<SpectrumChannel> channel, NetDeviceContainer& devices);
+void SetupModulationLoRa(NodeContainer& nodes, Ptr<SpectrumChannel> channel, NetDeviceContainer& devices, int spreadingFactor);
 void SetupModulationDectNrPlus(NodeContainer& nodes, Ptr<SpectrumChannel> channel, NetDeviceContainer& devices);
 void SetupModulationWifiHalow(NodeContainer& nodes, Ptr<SpectrumChannel> channel, NetDeviceContainer& devices);
 void SetupModulationCommon(NodeContainer& nodes, Ptr<SpectrumChannel> channel, double txPowerW, const std::string& dataRate, NetDeviceContainer& devices);
 
 // Helper functions for calculations
-double CalculateNoisePowerSpectralDensity(double temperature, double noiseFigureDb, double backgroundInterferencePsd);
+double CalculateNoisePowerSpectralDensity(double temperature, double noiseFigureDb, double frequencyHz);
 double ConvertWattsToDbm(double txPowerW);
 double GetTxPowerWatts(const std::string& modulation);
 double GetModulationDataRate(const std::string& modulation);
 double GetModulationFrequencyHz(const std::string& modulation);
 double GetModulationBandwidthHz(const std::string& modulation);
+double GetModulationNoiseFigureDb(const std::string& modulation);
+double GetModulationPacketSize(const std::string& modulation);
+double GetModulationPayloadPercentage(const std::string& modulation);
 
 // Configuration file parsing functions
 bool ParseConfigFile(const std::string& configPath, std::map<std::string, std::string>& config);
@@ -87,7 +90,13 @@ void WriteSimulationParameters(std::ostream& os, const std::string& scenario, co
                                 uint32_t seed = 0, double temperature = 0.0, double noiseFigureDb = 0.0);
 
 // PER curve functions
-double CalculatePERFromSNR_LoRa(double snrDb);
+double CalculatePERFromSNR_LoRa_SF7(double snrDb);
+double CalculatePERFromSNR_LoRa_SF8(double snrDb);
+double CalculatePERFromSNR_LoRa_SF9(double snrDb);
+double CalculatePERFromSNR_LoRa_SF10(double snrDb);
+double CalculatePERFromSNR_LoRa_SF11(double snrDb);
+double CalculatePERFromSNR_LoRa_SF12(double snrDb);
+double CalculatePERFromSNR_LoRa(double snrDb, int spreadingFactor);
 double CalculatePERFromSNR_DectNrPlus(double snrDb);
 double CalculatePERFromSNR_WifiHalow(double snrDb);
 double CalculatePERFromSNR(const std::string& modulation, double snrDb);
@@ -165,7 +174,6 @@ std::string g_modulation = "";   // Current modulation
 // Global noise parameters
 double g_temperature;                // Temperature in Kelvin
 double g_noiseFigureDb;              // Noise figure in dB
-double g_backgroundInterferencePsd;  // Background interference PSD in W/Hz
 
 // ============================================================================
 // CONSTANTS
@@ -185,7 +193,7 @@ const double BUILDING_HEIGHT = 3.0;             // Building height in meters (z-
 
 // Modulation-specific constants
 const double LORA_TX_POWER_W = 0.025;          // LoRa TX power (25 mW = 14 dBm)
-const double DECT_NR_PLUS_TX_POWER_W = 0.01;   // DECT NR+ TX power (10 mW = 10 dBm)
+const double DECT_NR_PLUS_TX_POWER_W = 0.2;    // DECT NR+ TX power (200 mW = 23 dBm)
 const double WIFI_HALOW_TX_POWER_W = 0.025;    // WiFi HaLow TX power (25 mW = 14 dBm)
 
 // ============================================================================
@@ -213,7 +221,6 @@ const double DEFAULT_PAYLOAD_PERCENTAGE = 100.0;
 // Noise defaults
 const double DEFAULT_TEMPERATURE_KELVIN = 290.0;
 const double DEFAULT_NOISE_FIGURE_DB = 10.0;
-const double DEFAULT_BACKGROUND_INTERFERENCE_PSD = 4e-19;
 
 // Output defaults
 const std::string DEFAULT_OUTPUT_DIR = "outputs";
@@ -225,15 +232,45 @@ const uint32_t DEFAULT_NUM_RUNS = 1;
 // TODO: NAME THIS HEADER OR PUT IT UNDER ANOTHER HEADER
 // ============================================================================
 
+// Helper function to extract LoRa spreading factor from modulation string
+// Returns -1 if not a LoRa modulation, otherwise returns SF (7-12)
+int GetLoRaSpreadingFactor(const std::string& modulation)
+{
+    if (modulation.find("lora-sf") == 0) {
+        // Extract SF number from "lora-sf7"
+        std::string sfStr = modulation.substr(7);
+        try {
+            int sf = std::stoi(sfStr);
+            if (sf >= 7 && sf <= 12) {
+                return sf;
+            }
+        } catch (...) {
+            return -1;
+        }
+    } else if (modulation == "lora") {
+        // Default to SF7
+        return 7;
+    }
+    return -1;
+}
+
 // Function that returns the data rate for a given modulation
+// LoRa data rates: SF7=5.47 kbps, SF8=3.13 kbps, SF9=1.76 kbps, SF10=0.98 kbps, SF11=0.54 kbps, SF12=0.29 kbps
 double GetModulationDataRate(const std::string& modulation)
 {
-    if (modulation == "lora") {
-        return 5500.0;  // 5.5 kbps
+    int sf = GetLoRaSpreadingFactor(modulation);
+    if (sf >= 7 && sf <= 12) {
+        // Actual values from LoRa specification:
+        if (sf == 7) return 5470.0;      // 5.47 kbps
+        else if (sf == 8) return 3125.0;  // 3.13 kbps
+        else if (sf == 9) return 1758.0;  // 1.76 kbps
+        else if (sf == 10) return 977.0;  // 0.98 kbps
+        else if (sf == 11) return 537.0;  // 0.54 kbps
+        else if (sf == 12) return 293.0;  // 0.29 kbps
     } else if (modulation == "dect-nr+") {
-        return 2000000.0;  // 2 Mbps
+        return 1050000.0;  // 1.05 Mbps
     } else if (modulation == "wifi-halow") {
-        return 150000.0;  // 150 kbps
+        return 300000.0;  // 300 kbps
     }
     return -1.0;
 }
@@ -252,21 +289,32 @@ bool CalculateTrafficParameters(const std::string& modulation,
     if (dutyCycle > 0.0) specifiedCount++;
     
     if (specifiedCount == 0) {
-        // No parameters provided, use defaults
+        // No parameters provided, use modulation-specific defaults
         packetRate = DEFAULT_PACKETS_PER_SECOND;
-        packetSize = DEFAULT_PACKET_SIZE;
+        packetSize = GetModulationPacketSize(modulation);
+        if (packetSize < 0.0) {
+            // Fallback to generic default if modulation not recognized
+            packetSize = DEFAULT_PACKET_SIZE;
+        }
     } else if (specifiedCount == 1) {
-        // One parameter provided, use default for a second one and calculate the third
+        // One parameter provided, use modulation-specific default for a second one and calculate the third
         // Priority: packet-rate > packet-size > duty-cycle
         if (packetRate > 0.0) {
-            // packet-rate provided: use default packet-size
-            packetSize = DEFAULT_PACKET_SIZE;
+            // packet-rate provided: use modulation-specific packet-size
+            packetSize = GetModulationPacketSize(modulation);
+            if (packetSize < 0.0) {
+                packetSize = DEFAULT_PACKET_SIZE;
+            }
         } else if (packetSize > 0.0) {
             // packet-size provided: use default packet-rate
             packetRate = DEFAULT_PACKETS_PER_SECOND;
         } else {
-            // duty-cycle provided: use default packet-rate
+            // duty-cycle provided: use default packet-rate and modulation-specific packet-size
             packetRate = DEFAULT_PACKETS_PER_SECOND;
+            packetSize = GetModulationPacketSize(modulation);
+            if (packetSize < 0.0) {
+                packetSize = DEFAULT_PACKET_SIZE;
+            }
         }
     } else if (specifiedCount == 3) {
         std::cerr << "Error: Cannot specify all 3 traffic parameters" << std::endl;
@@ -287,12 +335,20 @@ bool CalculateTrafficParameters(const std::string& modulation,
         packetRate = (dutyCycle / 100.0) / packetTxDuration;
     }
 
-    // Round packetSize and packetRate to integers ((NS-3 requires uint32_t)
+    // Round packetSize to integer (NS-3 requires uint32_t)
     packetSize = std::round(packetSize);
-    packetRate = std::round(packetRate);
-
-    // Recalculate duty cycle from rounded values
+    
+    // Keep packetRate as double to support fractional rates for low data rate modulations (e.g., LoRa SF10/SF12)
+    // NS-3's OnOffApplication DataRate can handle fractional values, and we'll calculate it directly from duty cycle
+    // Recalculate packetRate from duty cycle to ensure accuracy (handles rounding from packetSize)
+    if (packetRate > 0.0) {
+        // If packetRate was provided, recalculate duty cycle from rounded packetSize
     dutyCycle = ((packetSize * 8.0) / modulationDataRate) * packetRate * 100.0;
+    } else {
+        // If packetRate was calculated, recalculate it from duty cycle to ensure consistency
+        double packetTxDuration = (packetSize * 8.0) / modulationDataRate;
+        packetRate = (dutyCycle / 100.0) / packetTxDuration;
+    }
     
     // Validation checks
     if (packetSize < 1.0) {
@@ -303,7 +359,7 @@ bool CalculateTrafficParameters(const std::string& modulation,
     
     if (packetRate <= 0.0) {
         std::cerr << "Error: Packet rate must be more than 0 (is " 
-                  << static_cast<uint32_t>(packetRate) << " pps)" << std::endl;
+                  << packetRate << " pps)" << std::endl;
         return false;
     }
     
@@ -465,21 +521,40 @@ void WriteSimulationParameters(std::ostream& os, const std::string& scenario, co
 }
 
 // ============================================================================
-// TODO: NAME THIS HEADER OR PUT IT UNDER ANOTHER HEADER
+// Setup functions
 // ============================================================================
 
-// Calculate noise power spectral density
-double CalculateNoisePowerSpectralDensity(double temperature, double noiseFigureDb, double backgroundInterferencePsd)
+// Calculate noise power spectral density with frequency-specific background interference
+// Based on ITU-R P.372-16 recommendations for "City" environments
+double CalculateNoisePowerSpectralDensity(double temperature, double noiseFigureDb, double frequencyHz)
 {
     const double noiseFigureLinear = std::pow(10.0, noiseFigureDb / 10.0);
-    return BOLTZMANN_CONSTANT * temperature * noiseFigureLinear + backgroundInterferencePsd;
+    double thermalNoisePsd = BOLTZMANN_CONSTANT * temperature * noiseFigureLinear;
+    
+    // Frequency-specific background interference (ITU-R P.372-16 "City" environment)
+    double backgroundInterferencePsd;
+    if (frequencyHz >= 860e6 && frequencyHz <= 870e6) {
+        // 868 MHz ISM band (LoRa, WiFi HaLow)
+        // -165 dBm/Hz = 3.16 × 10^-20 W/Hz
+        backgroundInterferencePsd = 3.16e-20;
+    } else if (frequencyHz >= 1.88e9 && frequencyHz <= 1.9e9) {
+        // 1.9 GHz DECT band
+        // -170 dBm/Hz = 1.0 × 10^-20 W/Hz
+        backgroundInterferencePsd = 1.0e-20;
+    } else {
+        // Default fallback (use 868 MHz value)
+        backgroundInterferencePsd = 3.16e-20;
+    }
+    
+    return thermalNoisePsd + backgroundInterferencePsd;
 }
 
 // Get TX power in Watts for a given modulation
 double GetTxPowerWatts(const std::string& modulation)
 {
-    if (modulation == "lora") {
-        return LORA_TX_POWER_W;
+    int sf = GetLoRaSpreadingFactor(modulation);
+    if (sf >= 7 && sf <= 12) {
+        return LORA_TX_POWER_W;  // All LoRa SFs use same TX power
     } else if (modulation == "dect-nr+") {
         return DECT_NR_PLUS_TX_POWER_W;
     } else if (modulation == "wifi-halow") {
@@ -491,8 +566,9 @@ double GetTxPowerWatts(const std::string& modulation)
 // Get frequency in Hz for a given modulation
 double GetModulationFrequencyHz(const std::string& modulation)
 {
-    if (modulation == "lora") {
-        return 868e6;  // 868 MHz
+    int sf = GetLoRaSpreadingFactor(modulation);
+    if (sf >= 7 && sf <= 12) {
+        return 868e6;  // 868 MHz (all LoRa SFs use same frequency)
     } else if (modulation == "dect-nr+") {
         return 1.9e9;  // 1.9 GHz
     } else if (modulation == "wifi-halow") {
@@ -504,12 +580,59 @@ double GetModulationFrequencyHz(const std::string& modulation)
 // Get bandwidth in Hz for a given modulation
 double GetModulationBandwidthHz(const std::string& modulation)
 {
-    if (modulation == "lora") {
-        return 125e3;  // 125 kHz
+    int sf = GetLoRaSpreadingFactor(modulation);
+    if (sf >= 7 && sf <= 12) {
+        return 125e3;  // 125 kHz (all LoRa SFs use same bandwidth)
     } else if (modulation == "dect-nr+") {
-        return 5e6;     // 5 MHz
+        return 1.728e6; // 1.728 MHz (DECT-2020 NR base channel bandwidth)
     } else if (modulation == "wifi-halow") {
         return 1e6;     // 1 MHz
+    }
+    return -1.0;
+}
+
+// Get noise figure in dB for a given modulation
+// LoRa and WiFi HaLow: 5 dB, DECT NR+: 10 dB (to account for higher frequency front-end losses)
+double GetModulationNoiseFigureDb(const std::string& modulation)
+{
+    int sf = GetLoRaSpreadingFactor(modulation);
+    if (sf >= 7 && sf <= 12) {
+        return 5.0;  // LoRa: 5 dB
+    } else if (modulation == "dect-nr+") {
+        return 10.0; // DECT NR+: 10 dB (higher frequency front-end losses)
+    } else if (modulation == "wifi-halow") {
+        return 5.0;  // WiFi HaLow: 5 dB
+    }
+    return -1.0;
+}
+
+// Get packet size in bytes for a given modulation
+// Based on standard protocol overheads: LoRa 32 bytes, WiFi HaLow 32 bytes, DECT NR+ 256 bytes
+double GetModulationPacketSize(const std::string& modulation)
+{
+    int sf = GetLoRaSpreadingFactor(modulation);
+    if (sf >= 7 && sf <= 12) {
+        return 32.0;  // LoRa: 32 bytes (PHY frame)
+    } else if (modulation == "dect-nr+") {
+        return 256.0; // DECT NR+: 256 bytes (high-bandwidth carrier)
+    } else if (modulation == "wifi-halow") {
+        return 32.0;  // WiFi HaLow: 32 bytes
+    }
+    return -1.0;
+}
+
+// Get payload efficiency percentage for a given modulation
+// LoRa: 59% (13-byte LoRaWAN header + MIC), WiFi HaLow: 75% (802.11ah short MAC header),
+// DECT NR+: 85% (RLC/MAC layer framing)
+double GetModulationPayloadPercentage(const std::string& modulation)
+{
+    int sf = GetLoRaSpreadingFactor(modulation);
+    if (sf >= 7 && sf <= 12) {
+        return 59.0;  // LoRa: 59% payload efficiency
+    } else if (modulation == "dect-nr+") {
+        return 85.0;  // DECT NR+: 85% payload efficiency
+    } else if (modulation == "wifi-halow") {
+        return 75.0;  // WiFi HaLow: 75% payload efficiency
     }
     return -1.0;
 }
@@ -537,88 +660,248 @@ double CalculateSNR(double txPowerDbm, double pathlossDb, double noisePowerDbm)
 // ============================================================================
 
 // Calculate Packet Error Rate for LoRa SF7 based on SNR
-double CalculatePERFromSNR_LoRa(double snrDb)
+// Based on: "Experimental Evaluation of the Packet Reception Performance of LoRa" (MDPI Sensors, 2021)
+// Source: https://www.mdpi.com/1424-8220/21/4/1071
+// PER curve derived from Figure 6 in the paper, showing PER vs SNR for all SF (BW=125 kHz).
+// Data points were extracted from Figure 6 using WebPlotDigitizer and are saved in lora_per_curves_extracted_data.txt.
+// Uses linear interpolation between extracted data points
+double CalculatePERFromSNR_LoRa_SF7(double snrDb)
 {
-    // Calculated as follows:
-    //   100% error rate below -15 dB
-    //   Linear interpolation in intervals:
-    //     -15 dB to -12 dB: 100% to 10%
-    //     -12 dB to -10 dB: 10% to 1%
-    //     -10 dB to -7.5 dB: 1% to 0.1%
-    //     -7.5 dB to -5 dB: 0.1% to 0.01%
-    //   Exponential decay above -5 dB
-    if (snrDb < -15.0) {
+    // Data points extracted from Figure 6: (-11,1), (-10,0.847), (-9,0.540), (-8,0.221), (-7,0.032), (-6,0.024), (-4,0.015), (-2,0)
+    if (snrDb < -11.0) {
         return 1.0;
-    } else if (snrDb < -12.0) {
-        return 1.0 - ((snrDb + 15.0) / 3.0) * 0.9;
     } else if (snrDb < -10.0) {
-        return 0.1 - ((snrDb + 12.0) / 2.0) * 0.09;
-    } else if (snrDb < -7.5) {
-        return 0.01 - ((snrDb + 10.0) / 2.5) * 0.009;
-    } else if (snrDb < -5.0) {
-        return 0.001 - ((snrDb + 7.5) / 2.5) * 0.0009;
+        // Linear interpolation: -11 dB → 1.0, -10 dB → 0.847
+        return 1.0 - ((snrDb + 11.0) / 1.0) * (1.0 - 0.847);
+    } else if (snrDb < -9.0) {
+        // Linear interpolation: -10 dB → 0.847, -9 dB → 0.540
+        return 0.847 - ((snrDb + 10.0) / 1.0) * (0.847 - 0.540);
+    } else if (snrDb < -8.0) {
+        // Linear interpolation: -9 dB → 0.540, -8 dB → 0.221
+        return 0.540 - ((snrDb + 9.0) / 1.0) * (0.540 - 0.221);
+    } else if (snrDb < -7.0) {
+        // Linear interpolation: -8 dB → 0.221, -7 dB → 0.032
+        return 0.221 - ((snrDb + 8.0) / 1.0) * (0.221 - 0.032);
+    } else if (snrDb < -6.0) {
+        // Linear interpolation: -7 dB → 0.032, -6 dB → 0.024
+        return 0.032 - ((snrDb + 7.0) / 1.0) * (0.032 - 0.024);
+    } else if (snrDb < -4.0) {
+        // Linear interpolation: -6 dB → 0.024, -4 dB → 0.015
+        return 0.024 - ((snrDb + 6.0) / 2.0) * (0.024 - 0.015);
+    } else if (snrDb < -2.0) {
+        // Linear interpolation: -4 dB → 0.015, -2 dB → 0.0
+        return 0.015 - ((snrDb + 4.0) / 2.0) * 0.015;
     } else {
-        return std::max(0.0, 0.0001 * std::exp(-(snrDb + 5.0) / 2.0));
+        return 0.0;
+    }
+}
+
+double CalculatePERFromSNR_LoRa_SF8(double snrDb)
+{
+    // Data points extracted from Figure 6: (-14,1), (-13,0.979), (-12,0.496), (-11,0.224), (-10,0.009), (-9,0)
+    if (snrDb < -14.0) {
+        return 1.0;
+    } else if (snrDb < -13.0) {
+        // Linear interpolation: -14 dB → 1.0, -13 dB → 0.979
+        return 1.0 - ((snrDb + 14.0) / 1.0) * (1.0 - 0.979);
+    } else if (snrDb < -12.0) {
+        // Linear interpolation: -13 dB → 0.979, -12 dB → 0.496
+        return 0.979 - ((snrDb + 13.0) / 1.0) * (0.979 - 0.496);
+    } else if (snrDb < -11.0) {
+        // Linear interpolation: -12 dB → 0.496, -11 dB → 0.224
+        return 0.496 - ((snrDb + 12.0) / 1.0) * (0.496 - 0.224);
+    } else if (snrDb < -10.0) {
+        // Linear interpolation: -11 dB → 0.224, -10 dB → 0.009
+        return 0.224 - ((snrDb + 11.0) / 1.0) * (0.224 - 0.009);
+    } else if (snrDb < -9.0) {
+        // Linear interpolation: -10 dB → 0.009, -9 dB → 0.0
+        return 0.009 - ((snrDb + 10.0) / 1.0) * 0.009;
+    } else {
+        return 0.0;
+    }
+}
+
+double CalculatePERFromSNR_LoRa_SF9(double snrDb)
+{
+    // Data points extracted from Figure 6: (-16,1), (-15,0.855), (-14,0.142), (-13,0.027), (-12,0.018), (-11,0)
+    if (snrDb < -16.0) {
+        return 1.0;
+    } else if (snrDb < -15.0) {
+        // Linear interpolation: -16 dB → 1.0, -15 dB → 0.855
+        return 1.0 - ((snrDb + 16.0) / 1.0) * (1.0 - 0.855);
+    } else if (snrDb < -14.0) {
+        // Linear interpolation: -15 dB → 0.855, -14 dB → 0.142
+        return 0.855 - ((snrDb + 15.0) / 1.0) * (0.855 - 0.142);
+    } else if (snrDb < -13.0) {
+        // Linear interpolation: -14 dB → 0.142, -13 dB → 0.027
+        return 0.142 - ((snrDb + 14.0) / 1.0) * (0.142 - 0.027);
+    } else if (snrDb < -12.0) {
+        // Linear interpolation: -13 dB → 0.027, -12 dB → 0.018
+        return 0.027 - ((snrDb + 13.0) / 1.0) * (0.027 - 0.018);
+    } else if (snrDb < -11.0) {
+        // Linear interpolation: -12 dB → 0.018, -11 dB → 0.0
+        return 0.018 - ((snrDb + 12.0) / 1.0) * 0.018;
+    } else {
+        return 0.0;
+    }
+}
+
+double CalculatePERFromSNR_LoRa_SF10(double snrDb)
+{
+    // Data points extracted from Figure 6: (-18,1), (-17,0.903), (-16,0.366), (-15,0.024), (-14,0.015), (-13,0)
+    if (snrDb < -18.0) {
+        return 1.0;
+    } else if (snrDb < -17.0) {
+        // Linear interpolation: -18 dB → 1.0, -17 dB → 0.903
+        return 1.0 - ((snrDb + 18.0) / 1.0) * (1.0 - 0.903);
+    } else if (snrDb < -16.0) {
+        // Linear interpolation: -17 dB → 0.903, -16 dB → 0.366
+        return 0.903 - ((snrDb + 17.0) / 1.0) * (0.903 - 0.366);
+    } else if (snrDb < -15.0) {
+        // Linear interpolation: -16 dB → 0.366, -15 dB → 0.024
+        return 0.366 - ((snrDb + 16.0) / 1.0) * (0.366 - 0.024);
+    } else if (snrDb < -14.0) {
+        // Linear interpolation: -15 dB → 0.024, -14 dB → 0.015
+        return 0.024 - ((snrDb + 15.0) / 1.0) * (0.024 - 0.015);
+    } else if (snrDb < -13.0) {
+        // Linear interpolation: -14 dB → 0.015, -13 dB → 0.0
+        return 0.015 - ((snrDb + 14.0) / 1.0) * 0.015;
+    } else {
+        return 0.0;
+    }
+}
+
+double CalculatePERFromSNR_LoRa_SF12(double snrDb)
+{
+    // Data points extracted from Figure 6: (-23,1), (-21,0.646), (-20,0.339), (-19,0.083), (-18,0.068), (-17,0.009), (-16,0.006), (-14,0.003), (-12,0.003), (-2,0)
+    if (snrDb < -23.0) {
+        return 1.0;
+    } else if (snrDb < -21.0) {
+        // Linear interpolation: -23 dB → 1.0, -21 dB → 0.646
+        return 1.0 - ((snrDb + 23.0) / 2.0) * (1.0 - 0.646);
+    } else if (snrDb < -20.0) {
+        // Linear interpolation: -21 dB → 0.646, -20 dB → 0.339
+        return 0.646 - ((snrDb + 21.0) / 1.0) * (0.646 - 0.339);
+    } else if (snrDb < -19.0) {
+        // Linear interpolation: -20 dB → 0.339, -19 dB → 0.083
+        return 0.339 - ((snrDb + 20.0) / 1.0) * (0.339 - 0.083);
+    } else if (snrDb < -18.0) {
+        // Linear interpolation: -19 dB → 0.083, -18 dB → 0.068
+        return 0.083 - ((snrDb + 19.0) / 1.0) * (0.083 - 0.068);
+    } else if (snrDb < -17.0) {
+        // Linear interpolation: -18 dB → 0.068, -17 dB → 0.009
+        return 0.068 - ((snrDb + 18.0) / 1.0) * (0.068 - 0.009);
+    } else if (snrDb < -16.0) {
+        // Linear interpolation: -17 dB → 0.009, -16 dB → 0.006
+        return 0.009 - ((snrDb + 17.0) / 1.0) * (0.009 - 0.006);
+    } else if (snrDb < -14.0) {
+        // Linear interpolation: -16 dB → 0.006, -14 dB → 0.003
+        return 0.006 - ((snrDb + 16.0) / 2.0) * (0.006 - 0.003);
+    } else if (snrDb < -12.0) {
+        // Linear interpolation: -14 dB → 0.003, -12 dB → 0.003
+        return 0.003;
+    } else if (snrDb < -2.0) {
+        // Linear interpolation: -12 dB → 0.003, -2 dB → 0.0
+        return 0.003 - ((snrDb + 12.0) / 10.0) * 0.003;
+    } else {
+        return 0.0;
+    }
+}
+
+double CalculatePERFromSNR_LoRa_SF11(double snrDb)
+{
+    // Data points extracted from Figure 6: (-21,1), (-19,0.847), (-18,0.204), (-17,0.012), (-16,0.006), (-14,0.003), (-2,0)
+    if (snrDb < -21.0) {
+        return 1.0;
+    } else if (snrDb < -19.0) {
+        // Linear interpolation: -21 dB → 1.0, -19 dB → 0.847
+        return 1.0 - ((snrDb + 21.0) / 2.0) * (1.0 - 0.847);
+    } else if (snrDb < -18.0) {
+        // Linear interpolation: -19 dB → 0.847, -18 dB → 0.204
+        return 0.847 - ((snrDb + 19.0) / 1.0) * (0.847 - 0.204);
+    } else if (snrDb < -17.0) {
+        // Linear interpolation: -18 dB → 0.204, -17 dB → 0.012
+        return 0.204 - ((snrDb + 18.0) / 1.0) * (0.204 - 0.012);
+    } else if (snrDb < -16.0) {
+        // Linear interpolation: -17 dB → 0.012, -16 dB → 0.006
+        return 0.012 - ((snrDb + 17.0) / 1.0) * (0.012 - 0.006);
+    } else if (snrDb < -14.0) {
+        // Linear interpolation: -16 dB → 0.006, -14 dB → 0.003
+        return 0.006 - ((snrDb + 16.0) / 2.0) * (0.006 - 0.003);
+    } else if (snrDb < -2.0) {
+        // Linear interpolation: -14 dB → 0.003, -2 dB → 0.0
+        return 0.003 - ((snrDb + 14.0) / 12.0) * 0.003;
+    } else {
+        return 0.0;
+    }
+}
+
+// Wrapper function for LoRa PER calculation based on spreading factor
+double CalculatePERFromSNR_LoRa(double snrDb, int spreadingFactor)
+{
+    switch (spreadingFactor) {
+        case 7:
+            return CalculatePERFromSNR_LoRa_SF7(snrDb);
+        case 8:
+            return CalculatePERFromSNR_LoRa_SF8(snrDb);
+        case 9:
+            return CalculatePERFromSNR_LoRa_SF9(snrDb);
+        case 10:
+            return CalculatePERFromSNR_LoRa_SF10(snrDb);
+        case 11:
+            return CalculatePERFromSNR_LoRa_SF11(snrDb);
+        case 12:
+            return CalculatePERFromSNR_LoRa_SF12(snrDb);
+        default:
+            // Default to SF7 if invalid
+            return CalculatePERFromSNR_LoRa_SF7(snrDb);
     }
 }
 
 // Calculate Packet Error Rate for DECT NR+ based on SNR
+// Based on: ETSI TS 103 636-2 (MCS0 BPSK 1/2)
+// The "cliff" for BPSK in NR+ starts at 3dB and reaches stability (10% PER) at 7dB.
 double CalculatePERFromSNR_DectNrPlus(double snrDb)
 {
-    // Calculated as follows:
-    //   100% error rate below 0 dB
-    //   Linear interpolation in intervals:
-    //     0 dB to 5 dB: 100% to 10%
-    //     5 dB to 8 dB: 10% to 1%
-    //     8 dB to 12 dB: 1% to 0.1%
-    //     12 dB to 15 dB: 0.1% to 0.01%
-    //   Exponential decay above 15 dB
-    if (snrDb < 0.0) {
-        return 1.0;
-    } else if (snrDb < 5.0) {
-        return 1.0 - (snrDb / 5.0) * 0.9;
-    } else if (snrDb < 8.0) {
-        return 0.1 - ((snrDb - 5.0) / 3.0) * 0.09;
-    } else if (snrDb < 12.0) {
-        return 0.01 - ((snrDb - 8.0) / 4.0) * 0.009;
+    if (snrDb < 3.0) {
+        return 1.0; // Total loss
+    } else if (snrDb < 7.0) {
+        // Linear transition: 3 dB -> 1.0, 7 dB -> 0.1
+        return 1.0 - ((snrDb - 3.0) / 4.0) * 0.9;
     } else if (snrDb < 15.0) {
-        return 0.001 - ((snrDb - 12.0) / 3.0) * 0.0009;
+        // Transition to high-reliability: 7 dB -> 0.1, 15 dB -> 0.001
+        return 0.1 - ((snrDb - 7.0) / 8.0) * 0.099;
     } else {
-        return std::max(0.0, 0.0001 * std::exp(-(snrDb - 15.0) / 3.0));
+        // High SNR regime
+        return std::max(0.0, 0.001 * std::exp(-(snrDb - 15.0) / 2.0));
     }
 }
 
-// Calculate Packet Error Rate for WiFi HaLow based on SNR
+// Calculate Packet Error Rate for WiFi HaLow MCS0 based on SNR
+// Based on: IEEE 802.11ah-2016 (MCS0 1MHz BW)
+// HaLow MCS0 has a standard sensitivity requirement yielding ~5dB SNR for 10% PER.
 double CalculatePERFromSNR_WifiHalow(double snrDb)
 {
-    // Calculated as follows:
-    //   100% error rate below -2 dB
-    //   Linear interpolation in intervals:
-    //     -2 dB to 3 dB: 100% to 10%
-    //     3 dB to 6 dB: 10% to 1%
-    //     6 dB to 10 dB: 1% to 0.1%
-    //     10 dB to 12 dB: 0.1% to 0.01%
-    //   Exponential decay above 12 dB
-    if (snrDb < -2.0) {
-        return 1.0;
-    } else if (snrDb < 3.0) {
-        return 1.0 - ((snrDb + 2.0) / 5.0) * 0.9;
-    } else if (snrDb < 6.0) {
-        return 0.1 - ((snrDb - 3.0) / 3.0) * 0.09;
-    } else if (snrDb < 10.0) {
-        return 0.01 - ((snrDb - 6.0) / 4.0) * 0.009;
+    if (snrDb < 1.0) {
+        return 1.0; // Total loss
+    } else if (snrDb < 5.0) {
+        // Linear transition: 1 dB -> 1.0, 5 dB -> 0.1
+        return 1.0 - ((snrDb - 1.0) / 4.0) * 0.9;
     } else if (snrDb < 12.0) {
-        return 0.001 - ((snrDb - 10.0) / 2.0) * 0.0009;
+        // Transition to reliability: 5 dB -> 0.1, 12 dB -> 0.001
+        return 0.1 - ((snrDb - 5.0) / 7.0) * 0.099;
     } else {
-        return std::max(0.0, 0.0001 * std::exp(-(snrDb - 12.0) / 2.0));
+        // High SNR regime
+        return std::max(0.0, 0.001 * std::exp(-(snrDb - 12.0) / 2.0));
     }
 }
 
 // Wrapper function that calls the appropriate PER curve function based on modulation type
 double CalculatePERFromSNR(const std::string& modulation, double snrDb)
 {
-    if (modulation == "lora") {
-        return CalculatePERFromSNR_LoRa(snrDb);
+    int sf = GetLoRaSpreadingFactor(modulation);
+    if (sf >= 7 && sf <= 12) {
+        return CalculatePERFromSNR_LoRa(snrDb, sf);
     } else if (modulation == "dect-nr+") {
         return CalculatePERFromSNR_DectNrPlus(snrDb);
     } else if (modulation == "wifi-halow") {
@@ -1045,9 +1328,11 @@ void PhyRxEndOkTrace(std::string context, Ptr<const Packet> packet)
         // Get pathloss for this packet
         pathlossDb = g_packetMetrics[packetId].pathlossDb;
         
-        // Calculate noise power using modulation-specific bandwidth
+        // Calculate noise power using modulation-specific bandwidth, frequency, and noise figure
         double bandwidthHz = GetModulationBandwidthHz(g_modulation);
-        double noisePsdValue = CalculateNoisePowerSpectralDensity(g_temperature, g_noiseFigureDb, g_backgroundInterferencePsd);
+        double frequencyHz = GetModulationFrequencyHz(g_modulation);
+        double noiseFigureDb = GetModulationNoiseFigureDb(g_modulation);
+        double noisePsdValue = CalculateNoisePowerSpectralDensity(g_temperature, noiseFigureDb, frequencyHz);
         double noisePowerW = noisePsdValue * bandwidthHz;
         double noisePowerDbm = ConvertWattsToDbm(noisePowerW);
         
@@ -1271,8 +1556,10 @@ void SetupModulationCommon(NodeContainer& nodes, Ptr<SpectrumChannel> channel,
     // Create TX power spectral density
     Ptr<SpectrumValue> txPsd = sf.CreateTxPowerSpectralDensity(txPowerW, 1);
     
-    // Calculate and create noise power spectral density
-    double noisePsdValue = CalculateNoisePowerSpectralDensity(g_temperature, g_noiseFigureDb, g_backgroundInterferencePsd);
+    // Calculate and create noise power spectral density (frequency-specific, modulation-specific noise figure)
+    double frequencyHz = GetModulationFrequencyHz(g_modulation);
+    double noiseFigureDb = GetModulationNoiseFigureDb(g_modulation);
+    double noisePsdValue = CalculateNoisePowerSpectralDensity(g_temperature, noiseFigureDb, frequencyHz);
     Ptr<SpectrumValue> noisePsd = sf.CreateConstant(noisePsdValue);
     
     // Set up PHY layer
@@ -1286,19 +1573,31 @@ void SetupModulationCommon(NodeContainer& nodes, Ptr<SpectrumChannel> channel,
     devices = deviceHelper.Install(nodes);
 }
 
-void SetupModulationLoRa(NodeContainer& nodes, Ptr<SpectrumChannel> channel, NetDeviceContainer& devices)
+void SetupModulationLoRa(NodeContainer& nodes, Ptr<SpectrumChannel> channel, NetDeviceContainer& devices, int spreadingFactor)
 {
-    SetupModulationCommon(nodes, channel, LORA_TX_POWER_W, "5.5kbps", devices);
+    // Get data rate for the specific SF
+    double dataRateBps = GetModulationDataRate("lora-sf" + std::to_string(spreadingFactor));
+    std::stringstream ss;
+    ss << std::fixed << std::setprecision(0) << (dataRateBps / 1000.0) << "kbps";
+    SetupModulationCommon(nodes, channel, LORA_TX_POWER_W, ss.str(), devices);
 }
 
 void SetupModulationDectNrPlus(NodeContainer& nodes, Ptr<SpectrumChannel> channel, NetDeviceContainer& devices)
 {
-    SetupModulationCommon(nodes, channel, DECT_NR_PLUS_TX_POWER_W, "2Mbps", devices);
+    // Get data rate for DECT NR+
+    double dataRateBps = GetModulationDataRate("dect-nr+");
+    std::stringstream ss;
+    ss << std::fixed << std::setprecision(2) << (dataRateBps / 1000000.0) << "Mbps";
+    SetupModulationCommon(nodes, channel, DECT_NR_PLUS_TX_POWER_W, ss.str(), devices);
 }
 
 void SetupModulationWifiHalow(NodeContainer& nodes, Ptr<SpectrumChannel> channel, NetDeviceContainer& devices)
 {
-    SetupModulationCommon(nodes, channel, WIFI_HALOW_TX_POWER_W, "150kbps", devices);
+    // Get data rate for WiFi HaLow
+    double dataRateBps = GetModulationDataRate("wifi-halow");
+    std::stringstream ss;
+    ss << std::fixed << std::setprecision(0) << (dataRateBps / 1000.0) << "kbps";
+    SetupModulationCommon(nodes, channel, WIFI_HALOW_TX_POWER_W, ss.str(), devices);
 }
 
 // ============================================================================
@@ -1325,7 +1624,6 @@ int main(int argc, char *argv[])
     double simulationTime = DEFAULT_SIMULATION_TIME;
     double temperature = DEFAULT_TEMPERATURE_KELVIN;
     double noiseFigureDb = DEFAULT_NOISE_FIGURE_DB;
-    double backgroundInterferencePsd = DEFAULT_BACKGROUND_INTERFERENCE_PSD;
     
     // Traffic parameters (defaults handled in CalculateTrafficParameters())
     double packetRate = 0.0;
@@ -1361,7 +1659,6 @@ int main(int argc, char *argv[])
         ApplyConfigDouble(configFileValues, "sim-time", simulationTime);
         ApplyConfigDouble(configFileValues, "temperature", temperature);
         ApplyConfigDouble(configFileValues, "noise-figure-db", noiseFigureDb);
-        ApplyConfigDouble(configFileValues, "background-interference-psd", backgroundInterferencePsd);
     }
     
     // === Parse command line arguments (command-line overrides config file) ===
@@ -1392,7 +1689,6 @@ int main(int argc, char *argv[])
         else if (key == "sim-time") simulationTime = std::stod(value);
         else if (key == "temperature") temperature = std::stod(value);
         else if (key == "noise-figure-db") noiseFigureDb = std::stod(value);
-        else if (key == "background-interference-psd") backgroundInterferencePsd = std::stod(value);
     }
     
     // ============================================================================
@@ -1406,10 +1702,20 @@ int main(int argc, char *argv[])
         return 1;
     }
     
-    // Validate modulation
-    if (modulation != "lora" && modulation != "dect-nr+" && modulation != "wifi-halow") {
+    // Validate modulation (support lora, lora-sf7 through lora-sf12, dect-nr+, wifi-halow)
+    bool validModulation = false;
+    if (modulation == "dect-nr+" || modulation == "wifi-halow" || modulation == "lora") {
+        validModulation = true;
+    } else if (modulation.find("lora-sf") == 0) {
+        int sf = GetLoRaSpreadingFactor(modulation);
+        if (sf >= 7 && sf <= 12) {
+            validModulation = true;
+        }
+    }
+    
+    if (!validModulation) {
         std::cerr << "Error: Invalid modulation: " << modulation << std::endl;
-        std::cerr << "Valid modulations: lora, dect-nr+, wifi-halow" << std::endl;
+        std::cerr << "Valid modulations: lora, lora-sf7, lora-sf8, lora-sf9, lora-sf10, lora-sf11, lora-sf12, dect-nr+, wifi-halow" << std::endl;
         return 1;
     }
     
@@ -1471,15 +1777,19 @@ int main(int argc, char *argv[])
         return 1;
     }
     
-    if (backgroundInterferencePsd < 0.0) {
-        std::cerr << "Error: Background interference PSD must be >= 0 (is " << backgroundInterferencePsd << " W/Hz)" << std::endl;
-        return 1;
-    }
     
     // Calculate and validate traffic parameters
     if (!CalculateTrafficParameters(modulation, packetRate, packetSize, dutyCycle)) {
         std::cerr << "Error: Failed to calculate traffic parameters" << std::endl;
         return 1;
+    }
+    
+    // Set modulation-specific payload percentage if not explicitly set (still at default)
+    if (payloadPercentage == DEFAULT_PAYLOAD_PERCENTAGE) {
+        double modPayloadPct = GetModulationPayloadPercentage(modulation);
+        if (modPayloadPct > 0.0) {
+            payloadPercentage = modPayloadPct;
+        }
     }
     
     // Validate payload percentage
@@ -1488,14 +1798,12 @@ int main(int argc, char *argv[])
         return 1;
     }
     
-    // Convert to appropriate types (already rounded in CalculateTrafficParameters())
+    // Convert packetSize to uint (already rounded in CalculateTrafficParameters())
     uint32_t packetSizeUint = static_cast<uint32_t>(packetSize);
-    uint32_t packetsPerSecondUint = static_cast<uint32_t>(packetRate);
     
     // Set global noise parameters for use in modulation setup functions
     g_temperature = temperature;
     g_noiseFigureDb = noiseFigureDb;
-    g_backgroundInterferencePsd = backgroundInterferencePsd;
 
     // ============================================================================
     // SIMULATION PARAMETERS DISPLAY
@@ -1517,7 +1825,7 @@ int main(int argc, char *argv[])
     
     // Write simulation parameters using helper function
     WriteSimulationParameters(std::cout, scenario, modulation, nodeDistance, simulationTime,
-                               packetSizeUint, packetsPerSecondUint, dutyCycle, numRuns,
+                               packetSizeUint, static_cast<uint32_t>(packetRate), dutyCycle, numRuns,
                                numWalls, wallSpacing, buildingType, externalWallType,
                                0, temperature, noiseFigureDb);
     
@@ -1606,8 +1914,9 @@ int main(int argc, char *argv[])
         // === MODULATION SETUP ===
         // Create net devices
         NetDeviceContainer devices;
-        if (modulation == "lora") {
-            SetupModulationLoRa(nodes, channel, devices);
+        int sf = GetLoRaSpreadingFactor(modulation);
+        if (sf >= 7 && sf <= 12) {
+            SetupModulationLoRa(nodes, channel, devices, sf);
         } else if (modulation == "dect-nr+") {
             SetupModulationDectNrPlus(nodes, channel, devices);
         } else if (modulation == "wifi-halow") {
@@ -1633,8 +1942,11 @@ int main(int argc, char *argv[])
         OnOffHelper onoff("ns3::PacketSocketFactory", Address(socket));
         onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1]")); // ON 100% of the time
         onoff.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0]")); // OFF 0% of the time
-        // Set it to send packets at the rate specified by the user (this schedules it using the ns3 scheduler)
-        onoff.SetAttribute("DataRate", DataRateValue(DataRate(packetsPerSecondUint * packetSizeUint * 8))); // Data rate in bits per second
+        // Calculate DataRate directly from duty cycle to support fractional packet rates for low data rate modulations
+        // This ensures exact duty cycle 
+        double modulationDataRate = GetModulationDataRate(modulation);
+        uint64_t dataRateBps = static_cast<uint64_t>((dutyCycle / 100.0) * modulationDataRate);
+        onoff.SetAttribute("DataRate", DataRateValue(DataRate(dataRateBps))); // Data rate in bits per second
         onoff.SetAttribute("PacketSize", UintegerValue(packetSizeUint)); // Packet size in bytes
         
         ApplicationContainer apps = onoff.Install(nodes.Get(0));
@@ -1681,10 +1993,11 @@ int main(int argc, char *argv[])
         double txPowerW = GetTxPowerWatts(modulation);
         double txPowerDbm = ConvertWattsToDbm(txPowerW);
         
-        // Calculate noise power from noise PSD and bandwidth
-        // Noise is calculated from physical constants (Boltzmann, temperature, noise figure)
+        // Calculate noise power from noise PSD and bandwidth (frequency-specific, modulation-specific noise figure)
         double bandwidthHz = GetModulationBandwidthHz(modulation);
-        double noisePsdValue = CalculateNoisePowerSpectralDensity(g_temperature, g_noiseFigureDb, g_backgroundInterferencePsd);
+        double frequencyHzNoise = GetModulationFrequencyHz(modulation);
+        double noiseFigureDb = GetModulationNoiseFigureDb(modulation);
+        double noisePsdValue = CalculateNoisePowerSpectralDensity(g_temperature, noiseFigureDb, frequencyHzNoise);
         double noisePowerW = noisePsdValue * bandwidthHz;
         double noisePowerDbm = ConvertWattsToDbm(noisePowerW);
         
@@ -1701,18 +2014,17 @@ int main(int argc, char *argv[])
             pm.rssiDbm = txPowerDbm - pm.pathlossDb;
             pm.snrDb = pm.rssiDbm - noisePowerDbm;
             
-            // Collect statistics only for successfully received packets
-            if (pm.success) {
-                snrValues.push_back(pm.snrDb);
-                rssiValues.push_back(pm.rssiDbm);
-                pathlossValues.push_back(pm.pathlossDb);
-                
-                // Calculate latency for successfully received packets
-                if (pm.txTime > Time(0) && pm.rxTime > Time(0)) {
-                    double latency = (pm.rxTime - pm.txTime).GetSeconds();
-                    pm.latency = latency;
-                    latencyValues.push_back(latency);
-                }
+            // Collect SNR, RSSI, and pathloss statistics for ALL packets (both successful and failed)
+            // This ensures we get accurate SNR values even when all packets fail
+            snrValues.push_back(pm.snrDb);
+            rssiValues.push_back(pm.rssiDbm);
+            pathlossValues.push_back(pm.pathlossDb);
+            
+            // Calculate latency only for successfully received packets
+            if (pm.success && pm.txTime > Time(0) && pm.rxTime > Time(0)) {
+                double latency = (pm.rxTime - pm.txTime).GetSeconds();
+                pm.latency = latency;
+                latencyValues.push_back(latency);
             }
         }
         
@@ -1755,10 +2067,13 @@ int main(int argc, char *argv[])
         }
         
         // Calculate data rate (in bits per second)
-        g_simMetrics.dataRate = packetsPerSecondUint * packetSizeUint * 8.0;
+        // Calculate actual data rate from duty cycle (for display/metrics)
+        double modulationDataRateMetrics = GetModulationDataRate(modulation);
+        g_simMetrics.dataRate = (dutyCycle / 100.0) * modulationDataRateMetrics;
         
         // Calculate duty cycle in percentage
-        double packetTxDuration = (packetSizeUint * 8.0) / g_simMetrics.dataRate;  // seconds per packet
+        // Use full modulation data rate (not duty-cycle-adjusted) to calculate packet transmission duration
+        double packetTxDuration = (packetSizeUint * 8.0) / modulationDataRateMetrics;  // seconds per packet
         double totalTxTime = g_simMetrics.totalSent * packetTxDuration;
         g_simMetrics.dutyCycle = (totalTxTime / simulationTime) * 100.0;
         
@@ -1792,7 +2107,7 @@ int main(int argc, char *argv[])
     // ============================================================================
     WriteAggregatedMetrics(perRunMetricsPath, aggregatedMetricsPath, scenario, modulation, nodeDistance);
     WriteSimulationSummary(aggregatedMetricsPath, summaryPath, scenario, modulation, nodeDistance, 
-                          baseSeed, simulationTime, packetSizeUint, packetsPerSecondUint, numRuns, outputDir,
+                          baseSeed, simulationTime, packetSizeUint, static_cast<uint32_t>(packetRate), numRuns, outputDir,
                           numWalls, wallSpacing, buildingType, externalWallType, temperature, noiseFigureDb);
     return 0;
 }

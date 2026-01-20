@@ -158,16 +158,19 @@ fi
 OUTPUT_DIR="/workspace/$OUTPUT_DIR"
 CMD_ARGS="$CMD_ARGS --output-dir $OUTPUT_DIR"
 
-# Convert CONFIG_FILE to basename (config files are copied to /opt/ns-3-dev/ in Docker)
-# Add the config file to the command arguments (normalized to space-separated format)
-CONFIG_FILE=$(basename "$CONFIG_FILE")
-CMD_ARGS="$CMD_ARGS --config $CONFIG_FILE"
+# Convert CONFIG_FILE - handle both relative and absolute paths
+# Store original path for copying
+CONFIG_FILE_ORIG="$CONFIG_FILE"
+# Get basename for the config argument
+CONFIG_FILE_BASENAME=$(basename "$CONFIG_FILE")
+CMD_ARGS="$CMD_ARGS --config $CONFIG_FILE_BASENAME"
 
 # Run simulation in Docker (output streams in real-time)
 docker run --rm \
     -v "$(pwd)":/workspace \
     -w /workspace \
     -e OUTPUT_DIR="/workspace/$OUTPUT_DIR" \
+    -e CONFIG_FILE_ORIG="$CONFIG_FILE_ORIG" \
     ns3-modulation-comparison \
     bash -c "
         [ \"$DEBUG\" = \"true\" ] && echo 'Setting up workspace...'
@@ -182,11 +185,11 @@ docker run --rm \
         [ \"$DEBUG\" = \"true\" ] && echo 'Copying modulation_comparison.cc to NS-3 scratch directory...'
         cp modulation_comparison.cc \"\$NS3_SCRATCH_DIR/\"
         
-        if [ -f \"/workspace/$CONFIG_FILE\" ]; then
-            cp \"/workspace/$CONFIG_FILE\" /opt/ns-3-dev/ 2>/dev/null || true
-            [ \"$DEBUG\" = \"true\" ] && echo \"Copied config file: $CONFIG_FILE to /opt/ns-3-dev/\"
+        if [ -f \"/workspace/\$CONFIG_FILE_ORIG\" ]; then
+            cp \"/workspace/\$CONFIG_FILE_ORIG\" /opt/ns-3-dev/ 2>/dev/null || true
+            [ \"$DEBUG\" = \"true\" ] && echo \"Copied config file: \$CONFIG_FILE_ORIG to /opt/ns-3-dev/\"
         else
-            echo \"ERROR: Config file $CONFIG_FILE not found in workspace\"
+            echo \"ERROR: Config file \$CONFIG_FILE_ORIG not found in workspace\"
             exit 1
         fi
         

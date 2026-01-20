@@ -175,7 +175,7 @@ All modulations use NS-3 spectrum module (`AdhocAlohaNoackIdealPhy`) with SNR-ba
 - **dect-nr+**: DECT NR+
   - Data Rate: 2 Mbps
   - Frequency: 1.9 GHz
-  - Bandwidth: 5 MHz
+  - Bandwidth: 1.728 MHz
   - TX Power: 10 mW (10 dBm)
   
 - **wifi-halow**: WiFi HaLow (MCS0)
